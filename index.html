@@ -1,0 +1,788 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Agri Map Pro (Satellite + KML + Toggles)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <!-- Leaflet & Leaflet.Draw (CDN) -->
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+    crossorigin=""
+  />
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css"
+  />
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""
+  ></script>
+  <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+
+  <!-- Turf.js for area/length calcs -->
+  <script src="https://unpkg.com/@turf/turf@6.5.0/turf.min.js"></script>
+  <!-- tokml for KML export -->
+  <script src="https://unpkg.com/tokml@0.4.0/tokml.js"></script>
+
+  <style>
+    :root {
+      --bg: #0b1220;
+      --card: #10182c;
+      --muted: #7f8dae;
+      --text: #e9eefc;
+      --accent: #32d583;
+      --accent-2: #5b8def;
+      --danger: #ff6b6b;
+      --border: #1e2a4a;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; }
+    #app { display: grid; grid-template-columns: 360px 1fr; grid-template-rows: 60px 1fr; height: 100%; }
+    header {
+      grid-column: 1 / -1;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 16px; border-bottom: 1px solid var(--border); background: linear-gradient(180deg,#0e1630,#0b1220);
+    }
+    .brand { display: flex; align-items: center; gap: 12px; font-weight: 700; letter-spacing: 0.5px; }
+    .brand .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 12px var(--accent); }
+    .tag { font-size: 12px; color: var(--muted) }
+    .toolbar { display: flex; gap: 8px; align-items: center; }
+    .toolbar button {
+      background: #122043; color: var(--text);
+      border: 1px solid var(--border); padding: 8px 10px; border-radius: 8px; cursor: pointer;
+    }
+    .toolbar button:hover { filter: brightness(1.1); }
+
+    aside {
+      border-right: 1px solid var(--border); padding: 12px; background: linear-gradient(180deg,#0d1429,#0b1220);
+      overflow: auto;
+    }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 12px; margin-bottom: 12px; }
+    .card h3 { margin: 0 0 10px; font-size: 14px; color: #cbd6f6; text-transform: uppercase; letter-spacing: 0.6px; }
+    label { font-size: 12px; color: var(--muted); display: block; margin: 6px 0 4px; }
+    select, input[type="text"], input[type="file"] {
+      width: 100%; padding: 10px; border-radius: 10px; border: 1px solid var(--border); background: #0f1a36; color: var(--text);
+    }
+    .row { display: flex; gap: 8px; }
+    .row > * { flex: 1; }
+    .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border); cursor: pointer; background: #122043; color: var(--text); }
+    .btn.accent { background: #0f2b1f; border-color: #1c784f; }
+    .btn.blue { background: #0f204a; border-color: #254a99; }
+    .btn.danger { background: #2a1010; border-color: #703030; color: #ffc9c9; }
+    .btn.block { width: 100%; }
+    .hint { font-size: 12px; color: var(--muted); margin-top: 8px; }
+    .list { display: grid; gap: 8px; }
+    .item {
+      padding: 8px; border: 1px solid var(--border); border-radius: 10px; background: #0e1a34;
+      display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 8px;
+    }
+    .item .meta { font-size: 12px; color: var(--muted); }
+    .item .actions { display: flex; gap: 6px; }
+    .pill { font-size: 11px; border: 1px solid var(--border); background: #0a1531; color: #c8d6ff; padding: 2px 6px; border-radius: 999px; }
+    .item input[type="checkbox"] { width: 16px; height: 16px; }
+    #map { height: 100%; width: 100%; }
+    .footer-note { font-size: 11px; color: var(--muted); text-align: center; margin-top: 6px; }
+    .divider { height: 1px; background: var(--border); margin: 10px 0; }
+
+    /* Embedded KML->JOB box style (dark theme to match) */
+    .k2j { background:#0e1833; border:1px solid var(--border); border-radius:12px; padding:12px; }
+    .k2j h4 { margin:0 0 8px; color:#cbd6f6; }
+    .k2j label { margin-top:10px; }
+    .k2j button { margin-top:12px; }
+    .k2j #k2jOutput a { color:#32d583; text-decoration:none; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <header>
+      <div class="brand">
+        <span class="dot"></span>
+        <div>
+          <div>Agri Map Pro</div>
+          <div class="tag">Draw • Save • Export</div>
+        </div>
+      </div>
+      <div class="toolbar">
+        <button id="btnDrawPoly">Draw polygon</button>
+        <button id="btnToggleEdit">Edit</button>
+        <button id="btnDeleteSelected" class="danger">Delete selected</button>
+      </div>
+    </header>
+
+    <aside>
+      <div class="card">
+        <h3>Client Manager</h3>
+        <label for="clientSelect">Active client</label>
+        <select id="clientSelect"></select>
+        <div class="row" style="margin-top:8px;">
+          <button id="btnNewClient" class="btn accent">+ New</button>
+          <button id="btnRenameClient" class="btn blue">Rename</button>
+          <button id="btnDeleteClient" class="btn danger">Delete</button>
+        </div>
+        <div class="hint">Each client keeps their own set of saved fields (polygons).</div>
+      </div>
+
+      <div class="card">
+        <h3>Polygons</h3>
+        <div class="row" style="margin-bottom:8px;">
+          <input id="polyName" type="text" placeholder="Field name (e.g. North 12ha)" />
+          <button id="btnSavePolys" class="btn block accent">Save current draws</button>
+        </div>
+        <div class="list" id="polyList"></div>
+        <div class="footer-note">Tick/untick to show or hide a polygon.</div>
+      </div>
+
+      <div class="card">
+        <h3>Import / Export</h3>
+        <div class="row" style="margin-bottom:8px;">
+          <button id="btnExportKML" class="btn blue">Export KML</button>
+        </div>
+
+        <label for="importKmlFile">Import KML</label>
+        <input type="file" id="importKmlFile" accept=".kml,application/vnd.google-earth.kml+xml" />
+        <div class="hint">Imports polygons from KML into the active client (multipolygons supported as separate fields).</div>
+
+        <div class="divider"></div>
+
+        <!-- Embedded KML -> JOB Converter -->
+        <div class="k2j">
+          <h4>KML to JOB Converter</h4>
+          <label for="k2jJobId">Job ID:</label>
+          <input type="text" id="k2jJobId" placeholder="Enter Job ID" />
+
+          <label for="k2jClientName">Client Name:</label>
+          <input type="text" id="k2jClientName" placeholder="Enter Client Name" />
+
+          <label for="k2jKmlFile">Select KML File:</label>
+          <input type="file" id="k2jKmlFile" accept=".kml" />
+
+          <button id="k2jConvert" class="btn blue block">Convert to .JOB</button>
+          <div id="k2jOutput" style="text-align:center;margin-top:8px;"></div>
+        </div>
+
+        <div class="footer-note">Data is auto-saved locally in your browser.</div>
+      </div>
+
+      <div class="card">
+        <h3>Stats (selected)</h3>
+        <div id="statsBox" class="hint">Select a polygon on the map to see area & perimeter.</div>
+      </div>
+
+      <div class="footer-note">© Agri Map Pro — Esri World Imagery + OpenStreetMap • Leaflet</div>
+    </aside>
+
+    <main id="map"></main>
+  </div>
+
+  <script>
+    /*** -------- Storage Helpers -------- ***/
+    const LS_CLIENTS = 'agrimappro.clients';
+    const LS_CLIENT_DATA_PREFIX = 'agrimappro.client.'; // + id + '.features'
+
+    const uid = () => Math.random().toString(36).slice(2, 10);
+
+    function loadClients() {
+      try { return JSON.parse(localStorage.getItem(LS_CLIENTS)) || []; }
+      catch { return []; }
+    }
+    function saveClients(list) {
+      localStorage.setItem(LS_CLIENTS, JSON.stringify(list));
+    }
+    function keyForClient(id) {
+      return `${LS_CLIENT_DATA_PREFIX}${id}.features`;
+    }
+    function loadClientFeatures(id) {
+      try { return JSON.parse(localStorage.getItem(keyForClient(id))) || { type:"FeatureCollection", features:[] }; }
+      catch { return { type:"FeatureCollection", features:[] }; }
+    }
+    function saveClientFeatures(id, fc) {
+      localStorage.setItem(keyForClient(id), JSON.stringify(fc));
+    }
+
+    /*** -------- Map Setup -------- ***/
+    const map = L.map('map', { zoomControl: true }).setView([-25.8, 28.2], 7);
+
+    // Basemaps
+    const streets = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 20,
+      attribution: '&copy; OpenStreetMap'
+    });
+
+    const satellite = L.tileLayer(
+      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+      {
+        maxZoom: 19,
+        attribution: 'Tiles © Esri — Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community'
+      }
+    ).addTo(map); // default to satellite
+
+    const labels = L.tileLayer(
+      'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+      { maxZoom: 19, attribution: 'Esri Reference' }
+    );
+
+    const drawnItems = L.featureGroup().addTo(map);
+
+    // Layer control
+    L.control.layers(
+      { 'Satellite (Esri)': satellite, 'Streets (OSM)': streets },
+      { 'Labels': labels, 'Fields (your polygons)': drawnItems },
+      { collapsed: false }
+    ).addTo(map);
+
+    const drawControl = new L.Control.Draw({
+      edit: { featureGroup: drawnItems, edit: false, remove: false },
+      draw: {
+        polyline: false, rectangle: false, circle: false, circlemarker: false, marker: false,
+        polygon: { allowIntersection: false, showArea: true, shapeOptions: { color: '#5b8def', weight: 2 } }
+      }
+    });
+    map.addControl(drawControl);
+
+    let editMode = false;
+    let editCtl = null;
+    let selectedLayer = null;
+
+    /** Map of featureId -> Leaflet layer (only visible ones) */
+    const idToLayer = new Map();
+
+    function clearSelected() {
+      if (selectedLayer) {
+        selectedLayer.setStyle({ weight: 2 });
+        selectedLayer = null;
+      }
+      updateStats();
+    }
+
+    function selectLayer(layer) {
+      clearSelected();
+      selectedLayer = layer;
+      layer.setStyle({ weight: 4 });
+      updateStats(layer);
+    }
+
+    function ensureIdOnFeature(f) {
+      if (!f.properties) f.properties = {};
+      if (!f.properties.id) f.properties.id = uid();
+      return f;
+    }
+
+    function layerFromFeature(feature) {
+      const layer = L.geoJSON(feature, { style: { color: '#5b8def', weight: 2 } });
+      let added;
+      layer.eachLayer(l => {
+        added = l;
+        added._featureId = feature.properties.id;
+        drawnItems.addLayer(added);
+        attachLayerHandlers(added);
+      });
+      idToLayer.set(feature.properties.id, added);
+      return added;
+    }
+
+    function attachLayerHandlers(layer) {
+      layer.on('click', () => selectLayer(layer));
+      layer.on('mouseover', () => layer.setStyle({ color: '#7aa3ff' }));
+      layer.on('mouseout', () => {
+        if (selectedLayer !== layer) layer.setStyle({ color: '#5b8def' });
+      });
+    }
+
+    /*** -------- UI Elements -------- ***/
+    const clientSelect = document.getElementById('clientSelect');
+    const btnNewClient = document.getElementById('btnNewClient');
+    const btnRenameClient = document.getElementById('btnRenameClient');
+    const btnDeleteClient = document.getElementById('btnDeleteClient');
+
+    const btnDrawPoly = document.getElementById('btnDrawPoly');
+    const btnToggleEdit = document.getElementById('btnToggleEdit');
+    const btnDeleteSelected = document.getElementById('btnDeleteSelected');
+
+    const polyNameInput = document.getElementById('polyName');
+    const btnSavePolys = document.getElementById('btnSavePolys');
+    const polyList = document.getElementById('polyList');
+
+    const btnExportKML = document.getElementById('btnExportKML');
+    const importKmlFile = document.getElementById('importKmlFile');
+
+    // KML->JOB elements
+    const k2jJobId = document.getElementById('k2jJobId');
+    const k2jClientName = document.getElementById('k2jClientName');
+    const k2jKmlFile = document.getElementById('k2jKmlFile');
+    const k2jConvertBtn = document.getElementById('k2jConvert');
+    const k2jOutput = document.getElementById('k2jOutput');
+
+    const statsBox = document.getElementById('statsBox');
+
+    /*** -------- Client Logic -------- ***/
+    let clients = loadClients();
+    let activeClientId = null;
+
+    function ensureDefaultClient() {
+      if (clients.length === 0) {
+        const c = { id: uid(), name: 'Client A' };
+        clients.push(c);
+        saveClients(clients);
+        saveClientFeatures(c.id, { type: 'FeatureCollection', features: [] });
+      }
+    }
+
+    function refreshClientSelect() {
+      clientSelect.innerHTML = '';
+      clients.forEach(c => {
+        const opt = document.createElement('option');
+        opt.value = c.id; opt.textContent = c.name;
+        clientSelect.appendChild(opt);
+      });
+      if (!activeClientId || !clients.find(c => c.id === activeClientId)) {
+        activeClientId = clients[0]?.id || null;
+      }
+      clientSelect.value = activeClientId || '';
+    }
+
+    function loadClientIntoMap() {
+      drawnItems.clearLayers();
+      idToLayer.clear();
+      clearSelected();
+      if (!activeClientId) return;
+      const fc = loadClientFeatures(activeClientId);
+      fc.features = (fc.features || []).map(ensureIdOnFeature);
+      saveClientFeatures(activeClientId, fc); // ensure ids are persisted
+
+      // Add only visible features to map (visible === false -> hidden)
+      for (const f of fc.features) {
+        if (f.properties.visible === false) continue;
+        layerFromFeature(f);
+      }
+      fitIfAny();
+      renderPolyList();
+    }
+
+    function fitIfAny() {
+      if (drawnItems.getLayers().length > 0) {
+        map.fitBounds(drawnItems.getBounds(), { padding: [20, 20] });
+      }
+    }
+
+    btnNewClient.addEventListener('click', () => {
+      const name = prompt('New client name:');
+      if (!name) return;
+      const c = { id: uid(), name: name.trim() };
+      clients.push(c); saveClients(clients);
+      saveClientFeatures(c.id, { type: 'FeatureCollection', features: [] });
+      activeClientId = c.id;
+      refreshClientSelect(); loadClientIntoMap();
+    });
+
+    btnRenameClient.addEventListener('click', () => {
+      const current = clients.find(c => c.id === activeClientId);
+      if (!current) return;
+      const name = prompt('Rename client:', current.name);
+      if (!name) return;
+      current.name = name.trim(); saveClients(clients);
+      refreshClientSelect();
+    });
+
+    btnDeleteClient.addEventListener('click', () => {
+      const current = clients.find(c => c.id === activeClientId);
+      if (!current) return;
+      const ok = confirm(`Delete client "${current.name}" and all polygons?`);
+      if (!ok) return;
+      localStorage.removeItem(keyForClient(current.id));
+      clients = clients.filter(c => c.id !== current.id);
+      saveClients(clients);
+      ensureDefaultClient();
+      activeClientId = clients[0]?.id || null;
+      refreshClientSelect(); loadClientIntoMap();
+    });
+
+    clientSelect.addEventListener('change', () => {
+      activeClientId = clientSelect.value;
+      loadClientIntoMap();
+    });
+
+    /*** -------- Drawing & Editing -------- ***/
+    map.on(L.Draw.Event.CREATED, (e) => {
+      const layer = e.layer;
+      // Build feature from layer
+      const base = layer.toGeoJSON();
+      const fc = loadClientFeatures(activeClientId);
+      const newFeature = ensureIdOnFeature({
+        type: 'Feature',
+        geometry: base.geometry,
+        properties: {
+          id: uid(),
+          name: (polyNameInput.value || '').trim() || `Field ${fc.features.length + 1}`,
+          visible: true,
+          savedAt: new Date().toISOString()
+        }
+      });
+      // Save to storage
+      fc.features.push(newFeature);
+      saveClientFeatures(activeClientId, fc);
+
+      // Add to map and UI
+      layer._featureId = newFeature.properties.id;
+      attachLayerHandlers(layer);
+      drawnItems.addLayer(layer);
+      idToLayer.set(newFeature.properties.id, layer);
+      selectLayer(layer);
+      renderPolyList();
+    });
+
+    btnDrawPoly.addEventListener('click', () => {
+      new L.Draw.Polygon(map, drawControl.options.draw.polygon).enable();
+    });
+
+    btnToggleEdit.addEventListener('click', () => {
+      editMode = !editMode;
+      btnToggleEdit.textContent = editMode ? 'Stop Edit' : 'Edit';
+      if (editMode && !editCtl) {
+        editCtl = new L.Control.Draw({
+          edit: { featureGroup: drawnItems, edit: true, remove: false },
+          draw: false
+        });
+        map.addControl(editCtl);
+        map.on(L.Draw.Event.EDITED, (ev) => {
+          const fc = loadClientFeatures(activeClientId);
+          ev.layers.eachLayer(l => {
+            const id = l._featureId;
+            const match = fc.features.find(f => f.properties.id === id);
+            if (match) {
+              match.geometry = l.toGeoJSON().geometry;
+              match.properties.savedAt = new Date().toISOString();
+            }
+          });
+          saveClientFeatures(activeClientId, fc);
+          renderPolyList();
+        });
+      } else if (!editMode && editCtl) {
+        map.removeControl(editCtl);
+        editCtl = null;
+      }
+    });
+
+    btnDeleteSelected.addEventListener('click', () => {
+      if (!selectedLayer) return alert('Select a polygon first.');
+      const id = selectedLayer._featureId;
+      const fc = loadClientFeatures(activeClientId);
+      fc.features = fc.features.filter(f => f.properties.id !== id);
+      saveClientFeatures(activeClientId, fc);
+      drawnItems.removeLayer(selectedLayer);
+      idToLayer.delete(id);
+      selectedLayer = null;
+      renderPolyList();
+      updateStats();
+    });
+
+    btnSavePolys.addEventListener('click', () => {
+      const name = (polyNameInput.value || '').trim();
+      if (!name || !selectedLayer) { alert('Select a polygon and enter a name.'); return; }
+      const id = selectedLayer._featureId;
+      const fc = loadClientFeatures(activeClientId);
+      const f = fc.features.find(ff => ff.properties.id === id);
+      if (f) {
+        f.properties.name = name;
+        f.properties.savedAt = new Date().toISOString();
+        saveClientFeatures(activeClientId, fc);
+        // Update layer's feature props view-only
+        selectedLayer.feature = selectedLayer.feature || { type: 'Feature', properties: {} };
+        selectedLayer.feature.properties.name = name;
+        renderPolyList();
+        polyNameInput.value = '';
+        alert('Saved.');
+      }
+    });
+
+    /*** -------- Polygon List (with visibility toggles) -------- ***/
+    function renderPolyList() {
+      polyList.innerHTML = '';
+      const fc = activeClientId ? loadClientFeatures(activeClientId) : { features: [] };
+      fc.features.forEach((f, idx) => {
+        ensureIdOnFeature(f);
+        const id = f.properties.id;
+        const name = f.properties?.name || `Field ${idx + 1}`;
+        const areaHa = (turf.area(f) / 10000).toFixed(2);
+        const perimM = (turf.length(f, { units: 'meters' })).toFixed(0);
+        const isVisible = f.properties.visible !== false; // default true
+
+        const row = document.createElement('div');
+        row.className = 'item';
+
+        // Checkbox column
+        const check = document.createElement('input');
+        check.type = 'checkbox';
+        check.checked = isVisible;
+        check.title = isVisible ? 'Visible' : 'Hidden';
+
+        // Text column
+        const left = document.createElement('div');
+        left.innerHTML = `<strong>${name}</strong><div class="meta">${areaHa} ha • ${perimM} m</div>`;
+
+        // Actions
+        const actions = document.createElement('div');
+        actions.className = 'actions';
+
+        const btnZoom = document.createElement('button');
+        btnZoom.className = 'btn pill';
+        btnZoom.textContent = 'zoom';
+
+        const btnRename = document.createElement('button');
+        btnRename.className = 'btn pill';
+        btnRename.textContent = 'rename';
+
+        const btnDelete = document.createElement('button');
+        btnDelete.className = 'btn pill danger';
+        btnDelete.textContent = 'delete';
+
+        actions.appendChild(btnZoom);
+        actions.appendChild(btnRename);
+        actions.appendChild(btnDelete);
+
+        row.appendChild(check);
+        row.appendChild(left);
+        row.appendChild(actions);
+        polyList.appendChild(row);
+
+        // Toggle visibility
+        check.addEventListener('change', () => {
+          const fc2 = loadClientFeatures(activeClientId);
+          const f2 = fc2.features.find(ff => ff.properties.id === id);
+          if (!f2) return;
+
+          if (check.checked) {
+            f2.properties.visible = true;
+            saveClientFeatures(activeClientId, fc2);
+            if (!idToLayer.has(id)) {
+              layerFromFeature(f2);
+            }
+          } else {
+            f2.properties.visible = false;
+            saveClientFeatures(activeClientId, fc2);
+            const layer = idToLayer.get(id);
+            if (layer) {
+              if (selectedLayer === layer) clearSelected();
+              drawnItems.removeLayer(layer);
+              idToLayer.delete(id);
+            }
+          }
+        });
+
+        btnZoom.addEventListener('click', () => {
+          const layer = idToLayer.get(id);
+          if (layer) {
+            selectLayer(layer);
+            map.fitBounds(layer.getBounds(), { padding: [20, 20] });
+          } else {
+            alert('This field is hidden. Tick the checkbox to show it first.');
+          }
+        });
+
+        btnRename.addEventListener('click', () => {
+          const newName = prompt('New field name:', name);
+          if (!newName) return;
+          const fc2 = loadClientFeatures(activeClientId);
+          const f2 = fc2.features.find(ff => ff.properties.id === id);
+          if (f2) {
+            f2.properties.name = newName.trim();
+            f2.properties.savedAt = new Date().toISOString();
+            saveClientFeatures(activeClientId, fc2);
+            const layer = idToLayer.get(id);
+            if (layer) {
+              layer.feature = layer.feature || { type: 'Feature', properties: {} };
+              layer.feature.properties.name = f2.properties.name;
+            }
+            renderPolyList();
+          }
+        });
+
+        btnDelete.addEventListener('click', () => {
+          const ok = confirm(`Delete polygon "${name}"?`);
+          if (!ok) return;
+          const fc2 = loadClientFeatures(activeClientId);
+          fc2.features = fc2.features.filter(ff => ff.properties.id !== id);
+          saveClientFeatures(activeClientId, fc2);
+          const layer = idToLayer.get(id);
+          if (layer) {
+            if (selectedLayer === layer) clearSelected();
+            drawnItems.removeLayer(layer);
+            idToLayer.delete(id);
+          }
+          renderPolyList();
+          updateStats();
+        });
+      });
+
+      if (!fc.features || fc.features.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'hint';
+        empty.innerHTML = 'No polygons yet. Click <b>Draw polygon</b> to start mapping fields.';
+        polyList.appendChild(empty);
+      }
+    }
+
+    /*** -------- Stats -------- ***/
+    function updateStats(layer = null) {
+      const feature = layer ? layer.toGeoJSON() : null;
+      if (!feature) {
+        statsBox.innerHTML = 'Select a polygon on the map to see area & perimeter.';
+        return;
+      }
+      const areaHa = turf.area(feature) / 10000;
+      const perimeterM = turf.length(feature, { units: 'meters' });
+      const name = (layer.feature && layer.feature.properties && layer.feature.properties.name) || 'Field';
+      statsBox.innerHTML = `
+        <div><strong>${name}</strong></div>
+        <div class="hint">Area: ${areaHa.toFixed(2)} ha</div>
+        <div class="hint">Perimeter: ${perimeterM.toFixed(0)} m</div>
+      `;
+    }
+
+    /*** -------- Export & Import Handlers -------- ***/
+    function download(filename, content, type = 'application/json') {
+      const blob = new Blob([content], { type });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = filename; a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    btnExportKML.addEventListener('click', () => {
+      if (!activeClientId) return;
+      const client = clients.find(c => c.id === activeClientId);
+      const fc = loadClientFeatures(activeClientId);
+      const kml = tokml(fc, { name: 'name' });
+      download(`${(client?.name || 'client').replace(/\s+/g,'_')}.kml`, kml, 'application/vnd.google-earth.kml+xml');
+    });
+
+    // Import KML into the active client (as polygons)
+    importKmlFile.addEventListener('change', async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      try {
+        const text = await file.text();
+        const parser = new DOMParser();
+        const xml = parser.parseFromString(text, "text/xml");
+
+        /** Extract all <coordinates> from Polygon or MultiGeometry/Polygons */
+        const coordNodes = Array.from(xml.getElementsByTagName("coordinates"));
+        if (coordNodes.length === 0) throw new Error("No <coordinates> found in KML.");
+
+        const fc = loadClientFeatures(activeClientId);
+        let addedCount = 0;
+
+        coordNodes.forEach((node) => {
+          const coordText = (node.textContent || "").trim();
+          if (!coordText) return;
+
+          const pts = coordText.split(/\s+/).map(s => s.trim()).filter(Boolean).map(pair => {
+            const parts = pair.split(",");
+            const lon = parseFloat(parts[0]);
+            const lat = parseFloat(parts[1]);
+            return [lon, lat];
+          });
+
+          if (pts.length >= 3) {
+            // Close ring if needed
+            const first = pts[0], last = pts[pts.length - 1];
+            if (first[0] !== last[0] || first[1] !== last[1]) pts.push([...first]);
+
+            const feature = ensureIdOnFeature({
+              type: "Feature",
+              geometry: { type: "Polygon", coordinates: [pts] },
+              properties: {
+                id: uid(),
+                name: `Imported ${fc.features.length + 1}`,
+                visible: true,
+                savedAt: new Date().toISOString()
+              }
+            });
+
+            fc.features.push(feature);
+            // Add to map immediately
+            layerFromFeature(feature);
+            addedCount++;
+          }
+        });
+
+        saveClientFeatures(activeClientId, fc);
+        renderPolyList();
+        fitIfAny();
+        alert(`Imported ${addedCount} polygon(s) from KML.`);
+      } catch (err) {
+        alert('Import failed: ' + err.message);
+      } finally {
+        importKmlFile.value = '';
+      }
+    });
+
+    // KML → JOB converter (embedded)
+    k2jConvertBtn.addEventListener('click', () => {
+      const jobId = k2jJobId.value.trim();
+      const clientName = k2jClientName.value.trim();
+      if (!jobId || !clientName) {
+        alert("Please enter both Job ID and Client Name.");
+        return;
+      }
+      const file = k2jKmlFile.files[0];
+      if (!file) {
+        alert("Please select a KML file.");
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = function (e) {
+        const parser = new DOMParser();
+        const xml = parser.parseFromString(e.target.result, "text/xml");
+
+        let output = `.JOB ${jobId} ${clientName}\n.VERSION 1\n`;
+
+        const polygons = xml.getElementsByTagName("Polygon");
+        let polyNumber = 1;
+
+        for (let polygon of polygons) {
+          const coords = polygon.getElementsByTagName("coordinates")[0];
+          if (!coords) continue;
+
+          const coordText = coords.textContent.trim();
+          const coordLines = coordText.split(/\s+/);
+
+          output += `.POL ${polyNumber} #${polyNumber}\n\tINC\n`;
+          coordLines.forEach(line => {
+            const [lon, lat] = line.trim().split(",");
+            if (lat && lon) {
+              output += `\t${lat} ${lon}\n`;
+            }
+          });
+
+          polyNumber++;
+        }
+
+        k2jOutput.innerHTML = '';
+        const blob = new Blob([output], { type: "application/octet-stream" });
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = `${jobId}.job`; // Only Job ID in filename
+        link.textContent = `⬇️ Download ${jobId}.job File`;
+        link.style.display = "inline-block";
+        link.style.marginTop = "8px";
+        k2jOutput.appendChild(link);
+      };
+      reader.readAsText(file);
+    });
+
+    /*** -------- Init -------- ***/
+    ensureDefaultClient();
+    refreshClientSelect();
+    loadClientIntoMap();
+
+    // Click-away unselect
+    map.on('click', (e) => {
+      if (!e.originalEvent.target.closest('.leaflet-interactive')) clearSelected();
+    });
+  </script>
+</body>
+</html>
